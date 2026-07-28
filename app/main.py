@@ -70,7 +70,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, player_name: st
             event = data.get("event")
 
             if event == "PROGRESS_UPDATE":
-                # Broadcast opponent progress percentage
                 await manager.broadcast(room_id, {
                     "event": "OPPONENT_PROGRESS",
                     "player": player_name,
@@ -86,6 +85,18 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, player_name: st
                         "event": "GAME_OVER",
                         "winner": player_name
                     })
+
+            elif event == "REMATCH":
+                # Generate new puzzle for rematch
+                engine = Sudoku6x6()
+                puzzle, solution = engine.generate_puzzle(clues=18)
+                manager.game_states[room_id]["solution"] = solution
+                
+                await manager.broadcast(room_id, {
+                    "event": "GAME_START",
+                    "puzzle": puzzle,
+                    "solution": solution
+                })
 
     except WebSocketDisconnect:
         manager.disconnect(room_id, websocket)

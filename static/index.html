@@ -43,9 +43,10 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1.25rem;
             width: 100%;
             max-width: 440px;
+            position: relative;
         }
 
         h1 {
@@ -55,9 +56,24 @@
             background-clip: text;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+        }
+
+        /* Stats Bar Above Grid */
+        .game-stats-bar {
             display: flex;
-            align-items: center;
-            gap: 0.5rem;
+            justify-content: space-between;
+            width: 100%;
+            padding: 0.5rem 1rem;
+            background: #0f172a;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .stat-highlight {
+            color: #38bdf8;
+            font-weight: 800;
         }
 
         .controls {
@@ -75,11 +91,6 @@
             border-radius: 8px;
             font-size: 1rem;
             outline: none;
-            transition: border-color 0.2s;
-        }
-
-        input[type="text"]:focus {
-            border-color: var(--accent);
         }
 
         button {
@@ -101,7 +112,6 @@
             font-weight: 600;
             color: var(--text-muted);
             text-align: center;
-            min-height: 24px;
         }
 
         /* 6x6 Sudoku Grid Styling */
@@ -126,10 +136,8 @@
             font-weight: 700;
             color: var(--text);
             outline: none;
-            transition: all 0.2s ease;
         }
 
-        /* 2x3 Box Borders */
         .cell:nth-child(3n) { margin-right: 3px; }
         .cell:nth-child(n+7):nth-child(-n+12),
         .cell:nth-child(n+19):nth-child(-n+24) {
@@ -173,6 +181,28 @@
             width: 0%;
             transition: width 0.3s ease;
         }
+
+        /* Game Over Modal Summary */
+        .modal-overlay {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.92);
+            border-radius: 16px;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            padding: 2rem;
+            text-align: center;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-title { font-size: 1.6rem; font-weight: 800; color: #f8fafc; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; width: 100%; margin: 1rem 0; }
+        .stat-card { background: #1e293b; padding: 1rem; border-radius: 8px; border: 1px solid #334155; }
+        .stat-card-val { font-size: 1.4rem; font-weight: 800; color: #38bdf8; }
+        .stat-card-lbl { font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; }
     </style>
 </head>
 <body>
@@ -188,11 +218,41 @@
 
         <div id="status">Enter details to join or create a room</div>
 
+        <!-- Real-Time Metrics Header -->
+        <div class="game-stats-bar" id="statsBar" style="display: none;">
+            <div>⏱️ <span id="timer" class="stat-highlight">00:00</span></div>
+            <div>❌ Mistakes: <span id="mistakeCount" class="stat-highlight">0</span></div>
+        </div>
+
         <div class="progress-bar-container" id="progressContainer">
             <div class="progress-bar" id="progressBar"></div>
         </div>
 
         <div id="board"></div>
+
+        <!-- End Game Performance Summary Modal -->
+        <div class="modal-overlay" id="resultsModal">
+            <div class="modal-title" id="modalTitle">🏆 Victory!</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-card-val" id="finalTime">00:00</div>
+                    <div class="stat-card-lbl">Total Time</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-val" id="finalAccuracy">100%</div>
+                    <div class="stat-card-lbl">Accuracy</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-val" id="finalMistakes">0</div>
+                    <div class="stat-card-lbl">Mistakes</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-val" id="finalMoves">0</div>
+                    <div class="stat-card-lbl">Total Inputs</div>
+                </div>
+            </div>
+            <button onclick="requestRematch()">Play Again</button>
+        </div>
     </div>
 
     <script>
@@ -201,13 +261,18 @@
         let currentPuzzle = [];
         let playerName = '';
 
+        // Performance tracking metrics
+        let mistakes = 0;
+        let totalInputs = 0;
+        let timerInterval = null;
+        let secondsElapsed = 0;
+
         function joinRoom() {
             playerName = document.getElementById('username').value.trim();
             const room = document.getElementById('roomCode').value.trim();
 
             if (!playerName || !room) return;
 
-            // DYNAMIC PROTOCOL DETECTION (Handles ws:// local and wss:// cloud hosting)
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}/ws/${room}/${playerName}`);
 
@@ -218,11 +283,7 @@
                     document.getElementById('status').innerText = `Waiting for opponent... (${data.count}/2 connected)`;
                 } 
                 else if (data.event === 'GAME_START') {
-                    document.getElementById('status').innerText = '🚀 Game Live! Solve fast!';
-                    document.getElementById('lobby').style.display = 'none';
-                    document.getElementById('progressContainer').style.display = 'block';
-                    solutionBoard = data.solution;
-                    renderBoard(data.puzzle);
+                    resetAndStartGame(data.puzzle, data.solution);
                 } 
                 else if (data.event === 'OPPONENT_PROGRESS') {
                     if (data.player !== playerName) {
@@ -230,13 +291,34 @@
                     }
                 }
                 else if (data.event === 'GAME_OVER') {
-                    if (data.winner === playerName) {
-                        document.getElementById('status').innerText = '🏆 You WON the race!';
-                    } else {
-                        document.getElementById('status').innerText = `❌ ${data.winner} finished first!`;
-                    }
+                    handleGameOver(data.winner);
                 }
             };
+        }
+
+        function resetAndStartGame(puzzle, solution) {
+            document.getElementById('status').innerText = ' Race in progress!';
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('resultsModal').style.display = 'none';
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('statsBar').style.display = 'flex';
+
+            solutionBoard = solution;
+            mistakes = 0;
+            totalInputs = 0;
+            secondsElapsed = 0;
+            document.getElementById('mistakeCount').innerText = '0';
+
+            // Start Timer
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                secondsElapsed++;
+                let mins = String(Math.floor(secondsElapsed / 60)).padStart(2, '0');
+                let secs = String(secondsElapsed % 60).padStart(2, '0');
+                document.getElementById('timer').innerText = `${mins}:${secs}`;
+            }, 1000);
+
+            renderBoard(puzzle);
         }
 
         function renderBoard(puzzle) {
@@ -270,18 +352,22 @@
             input.classList.remove('cell-correct', 'cell-error');
 
             if (val >= 1 && val <= 6) {
+                totalInputs++;
                 currentPuzzle[r][c] = val;
 
                 if (val === solutionBoard[r][c]) {
                     input.classList.add('cell-correct');
                 } else {
                     input.classList.add('cell-error');
+                    mistakes++;
+                    document.getElementById('mistakeCount').innerText = mistakes;
                 }
             } else {
                 input.value = '';
                 currentPuzzle[r][c] = 0;
             }
 
+            // Progress tracking
             let totalCells = 36;
             let filledCorrect = 0;
             for (let row = 0; row < 6; row++) {
@@ -305,6 +391,32 @@
                     board: currentPuzzle
                 }));
             }
+        }
+
+        function handleGameOver(winner) {
+            clearInterval(timerInterval);
+
+            // Calculate Accuracy
+            let correctMoves = totalInputs - mistakes;
+            let accuracy = totalInputs > 0 ? Math.round((correctMoves / totalInputs) * 100) : 100;
+            if (accuracy < 0) accuracy = 0;
+
+            let mins = String(Math.floor(secondsElapsed / 60)).padStart(2, '0');
+            let secs = String(secondsElapsed % 60).padStart(2, '0');
+
+            // Populate Modal Results
+            document.getElementById('modalTitle').innerText = (winner === playerName) ? '🏆 You Won!' : `❌ ${winner} Won!`;
+            document.getElementById('finalTime').innerText = `${mins}:${secs}`;
+            document.getElementById('finalAccuracy').innerText = `${accuracy}%`;
+            document.getElementById('finalMistakes').innerText = mistakes;
+            document.getElementById('finalMoves').innerText = totalInputs;
+
+            document.getElementById('resultsModal').style.display = 'flex';
+        }
+
+        function requestRematch() {
+            // Re-trigger game start logic on websocket
+            ws.send(JSON.stringify({ event: 'REMATCH' }));
         }
     </script>
 </body>
