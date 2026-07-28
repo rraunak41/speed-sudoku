@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speed Sudoku 6x6</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --accent: #6366f1;
+            --accent-hover: #4f46e5;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --cell-bg: #334155;
+            --given-bg: #1e293b;
+            --correct-bg: #064e3b;
+            --correct-text: #34d399;
+            --error-bg: #7f1d1d;
+            --error-text: #fca5a5;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 16px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+            width: 100%;
+            max-width: 440px;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #a5b4fc, #6366f1);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            width: 100%;
+        }
+
+        input[type="text"] {
+            background: var(--bg);
+            border: 1px solid #475569;
+            color: var(--text);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--accent);
+        }
+
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        button:hover { background: var(--accent-hover); }
+        button:active { transform: scale(0.98); }
+
+        #status {
+            font-weight: 600;
+            color: var(--text-muted);
+            text-align: center;
+            min-height: 24px;
+        }
+
+        /* 6x6 Sudoku Grid Styling */
+        #board {
+            display: grid;
+            grid-template-columns: repeat(6, 52px);
+            grid-template-rows: repeat(6, 52px);
+            gap: 2px;
+            background: #475569;
+            padding: 4px;
+            border-radius: 10px;
+            border: 2px solid #64748b;
+        }
+
+        .cell {
+            width: 52px;
+            height: 52px;
+            background: var(--cell-bg);
+            border: none;
+            text-align: center;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text);
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        /* 2x3 Box Borders */
+        .cell:nth-child(3n) { margin-right: 3px; }
+        .cell:nth-child(n+7):nth-child(-n+12),
+        .cell:nth-child(n+19):nth-child(-n+24) {
+            margin-bottom: 3px;
+        }
+
+        .cell-given {
+            background: var(--given-bg);
+            color: #64748b;
+        }
+
+        .cell-correct {
+            background: var(--correct-bg) !important;
+            color: var(--correct-text) !important;
+        }
+
+        .cell-error {
+            background: var(--error-bg) !important;
+            color: var(--error-text) !important;
+            animation: shake 0.2s ease-in-out;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-3px); }
+            75% { transform: translateX(3px); }
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            background: #334155;
+            border-radius: 8px;
+            height: 10px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #10b981);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>⚡ Speed Sudoku</h1>
+
+        <div class="controls" id="lobby">
+            <input type="text" id="username" placeholder="Your Name" value="Player1">
+            <input type="text" id="roomCode" placeholder="Room Code" value="ROOM1">
+            <button onclick="joinRoom()">Join Game</button>
+        </div>
+
+        <div id="status">Enter details to join or create a room</div>
+
+        <div class="progress-bar-container" id="progressContainer">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+
+        <div id="board"></div>
+    </div>
+
+    <script>
+        let ws;
+        let solutionBoard = [];
+        let currentPuzzle = [];
+        let playerName = '';
+
+        function joinRoom() {
+            playerName = document.getElementById('username').value.trim();
+            const room = document.getElementById('roomCode').value.trim();
+
+            if (!playerName || !room) return;
+
+            // DYNAMIC PROTOCOL DETECTION (Handles ws:// local and wss:// cloud hosting)
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/${room}/${playerName}`);
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.event === 'PLAYER_JOINED') {
+                    document.getElementById('status').innerText = `Waiting for opponent... (${data.count}/2 connected)`;
+                } 
+                else if (data.event === 'GAME_START') {
+                    document.getElementById('status').innerText = '🚀 Game Live! Solve fast!';
+                    document.getElementById('lobby').style.display = 'none';
+                    document.getElementById('progressContainer').style.display = 'block';
+                    solutionBoard = data.solution;
+                    renderBoard(data.puzzle);
+                } 
+                else if (data.event === 'OPPONENT_PROGRESS') {
+                    if (data.player !== playerName) {
+                        document.getElementById('progressBar').style.width = `${data.progress}%`;
+                    }
+                }
+                else if (data.event === 'GAME_OVER') {
+                    if (data.winner === playerName) {
+                        document.getElementById('status').innerText = '🏆 You WON the race!';
+                    } else {
+                        document.getElementById('status').innerText = `❌ ${data.winner} finished first!`;
+                    }
+                }
+            };
+        }
+
+        function renderBoard(puzzle) {
+            currentPuzzle = puzzle.map(row => [...row]);
+            const container = document.getElementById('board');
+            container.innerHTML = '';
+
+            for (let r = 0; r < 6; r++) {
+                for (let c = 0; c < 6; c++) {
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.maxLength = 1;
+                    input.className = 'cell';
+
+                    if (puzzle[r][c] !== 0) {
+                        input.value = puzzle[r][c];
+                        input.disabled = true;
+                        input.classList.add('cell-given');
+                    } else {
+                        input.oninput = (e) => handleInput(e, r, c);
+                    }
+                    container.appendChild(input);
+                }
+            }
+        }
+
+        function handleInput(e, r, c) {
+            const input = e.target;
+            const val = parseInt(input.value) || 0;
+
+            input.classList.remove('cell-correct', 'cell-error');
+
+            if (val >= 1 && val <= 6) {
+                currentPuzzle[r][c] = val;
+
+                if (val === solutionBoard[r][c]) {
+                    input.classList.add('cell-correct');
+                } else {
+                    input.classList.add('cell-error');
+                }
+            } else {
+                input.value = '';
+                currentPuzzle[r][c] = 0;
+            }
+
+            let totalCells = 36;
+            let filledCorrect = 0;
+            for (let row = 0; row < 6; row++) {
+                for (let col = 0; col < 6; col++) {
+                    if (currentPuzzle[row][col] === solutionBoard[row][col]) {
+                        filledCorrect++;
+                    }
+                }
+            }
+
+            let progressPct = Math.round((filledCorrect / totalCells) * 100);
+
+            ws.send(JSON.stringify({
+                event: 'PROGRESS_UPDATE',
+                progress: progressPct
+            }));
+
+            if (filledCorrect === totalCells) {
+                ws.send(JSON.stringify({
+                    event: 'SUBMIT_WIN',
+                    board: currentPuzzle
+                }));
+            }
+        }
+    </script>
+</body>
+</html>
